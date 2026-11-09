@@ -1,4 +1,4 @@
-"""Legito-inspired UI for the existing Word -> Gemini -> annotated DOCX demo.
+"""Legito-inspired UI for the DOCX/PDF -> Gemini -> annotated DOCX demo.
 
 Keeps migrate.py's extraction, replacement validation, and document writing
 unchanged. Legito import and legal review are manual.
@@ -18,9 +18,9 @@ from docx import Document
 from dotenv import load_dotenv
 
 from migrate import ask_gemini, convert_document, paragraphs_in_document
+from pdf_ingest import load_source_document, MAX_INPUT_BYTES, MAX_PDF_PAGES
 
 BASE_DIR = Path(__file__).resolve().parent
-MAX_DOC_BYTES = 10 * 1024 * 1024
 DEFAULT_MODEL = "gemini-3.5-flash-lite"  # Keep the working app's default.
 
 st.set_page_config(
@@ -199,12 +199,12 @@ with hero_left:
         """
         <div class="overline">AI-POWERED DOCUMENT AUTOMATION</div>
         <h1 class="hero-headline">From old contracts<br>to <em>smart templates.</em></h1>
-        <p class="hero-subtitle">Give your legacy Word documents a head start.
+        <p class="hero-subtitle">Give your legacy Word and PDF documents a head start.
         Our prototype detects reusable fields with Gemini and prepares a Word file
         for review and import into Legito.</p>
         <div class="hero-benefits">
-          <span class="hero-chip">Word → Gemini → Legito</span>
-          <span class="hero-chip">Keeps original wording</span>
+          <span class="hero-chip">Word / PDF → Gemini → Legito</span>
+          <span class="hero-chip">AI annotation + OCR for scans</span>
           <span class="hero-chip">Human review required</span>
         </div>
         """,
@@ -216,8 +216,8 @@ with hero_right:
         <div class="workflow-card">
           <div class="workflow-heading">HOW IT WORKS</div>
           <div class="workflow-step"><div class="step-number">01</div>
-            <div><div class="step-text">Upload Word</div>
-              <div class="step-desc">Choose a fictional legacy contract in DOCX format.</div></div></div>
+            <div><div class="step-text">Upload Word or PDF</div>
+              <div class="step-desc">Choose a fictional legacy DOCX or PDF contract.</div></div></div>
           <div class="workflow-step"><div class="step-number">02</div>
             <div><div class="step-text">Identify reusable fields</div>
               <div class="step-desc">Gemini proposes names, dates and amounts.</div></div></div>
@@ -232,16 +232,16 @@ with hero_right:
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 st.markdown(
     '<div class="section-title">Convert a document</div>'
-    '<div class="section-intro">Select a DOCX file, choose a model, and generate an annotated version.</div>',
+    '<div class="section-intro">Select a Word document or PDF, choose a model, and generate an annotated Word version.</div>',
     unsafe_allow_html=True,
 )
 
 form_col, details_col = st.columns([1.65, .85], gap="large")
 with form_col:
     uploaded = st.file_uploader(
-        "Word document (.docx)",
-        type=["docx"],
-        help="Maximum 10 MB. Use fictional documents only for this demonstration.",
+        "Document (.docx or .pdf)",
+        type=["docx", "pdf"],
+        help="Maximum 10 MB; PDFs up to 10 pages. Use fictional documents only.",
     )
     with st.expander("Advanced settings", expanded=False):
         model = st.text_input(
@@ -270,22 +270,22 @@ with details_col:
           You must check the output before importing it into Legito.
           <br><br>
           <strong>Supported in this demo</strong><br>
-          DOCX up to 10 MB · text in body paragraphs and tables · TextInput, Date and Money fields.
+          DOCX or PDF up to 10 MB · PDFs up to 10 pages · Gemini OCR for scanned PDF pages · TextInput, Date and Money fields.<br><br>PDF formatting is not preserved; always check the original.
         </div>
         """,
         unsafe_allow_html=True,
     )
 
 if convert_clicked and uploaded is not None:
-    if uploaded.size > MAX_DOC_BYTES:
-        st.error("For this demo, DOCX files must be 10 MB or smaller.")
+    if uploaded.size > MAX_INPUT_BYTES:
+        st.error("For this demo, files must be 10 MB or smaller.")
     else:
         try:
             with st.spinner("Gemini is analyzing your contract and preparing annotations…"):
                 started = time.perf_counter()
                 data = uploaded.getvalue()
                 input_hash = sha256(data).hexdigest()
-                doc = Document(BytesIO(data))
+                doc, ingestion = load_source_document(data, uploaded.name, model.strip())
                 extraction = ask_gemini(paragraphs_in_document(doc), model.strip())
                 accepted, skipped = convert_document(doc, extraction)
                 output = BytesIO()
@@ -294,6 +294,7 @@ if convert_clicked and uploaded is not None:
                 report = {
                     "source": uploaded.name,
                     "model": model.strip(),
+                    "ingestion": ingestion,
                     "proposed_fields": len(extraction.fields),
                     "inserted_fields": len(accepted),
                     "accepted": accepted,
@@ -320,7 +321,7 @@ if convert_clicked and uploaded is not None:
             elif isinstance(exc, ValueError):
                 st.error(f"Document could not be processed: {exc}")
             else:
-                st.error(f"Conversion failed ({type(exc).__name__}). Check the model, API key and DOCX file.")
+                st.error(f"Conversion failed ({type(exc).__name__}). Check the model, API key and uploaded file.")
 
 conversion = st.session_state.get("conversion")
 if conversion and uploaded is not None:
@@ -332,6 +333,11 @@ if conversion and uploaded is not None:
             '<span>AI suggestions have been applied to a new Word document. Review before import.</span></div>',
             unsafe_allow_html=True,
         )
+        if report.get("ingestion", {}).get("input_format") == "PDF":
+            st.warning("PDF → Word is a text reconstruction, not a faithful visual conversion. "
+                       "Review the full document, particularly OCR text, tables, dates and signatures.")
+            st.caption(f"PDF pages: {report['ingestion']['pdf_pages']} · "
+                       f"Scanned pages processed with Gemini OCR: {report['ingestion']['ocr_pages']}")
         metric_one, metric_two, metric_three = st.columns(3)
         metric_one.metric("Fields inserted", report["inserted_fields"])
         metric_two.metric("Proposed by AI", report["proposed_fields"])

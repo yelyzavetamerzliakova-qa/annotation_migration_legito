@@ -1,7 +1,8 @@
-"""Conservative DOCX -> Gemini -> Legito-annotated DOCX prototype.
+"""Conservative DOCX/PDF -> Gemini -> Legito-annotated DOCX prototype.
 
 Usage:
     python migrate.py samples/example_nda.docx
+    python migrate.py samples/example_contract.pdf
 
 Gemini suggests exact text replacements. The Python program validates each
 replacement and only inserts documented Word-import annotations. Legito import
@@ -21,6 +22,7 @@ from pathlib import Path
 from typing import Literal
 
 from docx import Document
+from pdf_ingest import load_source_document
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
@@ -178,18 +180,18 @@ def ask_gemini(paragraphs, model_name: str):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("input", type=Path, help="Path to your old .docx file")
+    parser.add_argument("input", type=Path, help="Path to your old .docx or .pdf file")
     parser.add_argument("--model", default="gemini-flash-latest", help="Gemini model ID")
     args = parser.parse_args()
 
     load_dotenv(Path(__file__).parent / ".env")
     if not os.getenv("GEMINI_API_KEY"):
         sys.exit("ERROR: GEMINI_API_KEY not set. Copy .env.example to .env and insert your key.")
-    if not args.input.is_file() or args.input.suffix.lower() != ".docx":
-        sys.exit("ERROR: Provide an existing .docx file (not a .doc or .pdf).")
+    if not args.input.is_file() or args.input.suffix.lower() not in (".docx", ".pdf"):
+        sys.exit("ERROR: Provide an existing .docx or .pdf file.")
 
     started = time.perf_counter()
-    doc = Document(str(args.input))
+    doc, ingestion = load_source_document(args.input.read_bytes(), args.input.name, args.model)
     result = ask_gemini(paragraphs_in_document(doc), args.model)
     accepted, skipped = convert_document(doc, result)
 
@@ -201,6 +203,7 @@ def main():
 
     report = {
         "source": str(args.input),
+        "ingestion": ingestion,
         "output": str(output_path),
         "model": args.model,
         "proposed_fields": len(result.fields),

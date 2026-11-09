@@ -1,76 +1,77 @@
-# Legito + Gemini — beginner prototype
+# Legito AI Migration — DOCX + PDF OCR upgrade
 
-The workflow: **fictional Word contract (.docx) -> Python -> Gemini API -> annotated Word (.docx) -> manual Legito import and review**.
+An upgrade for the **existing** Streamlit + Python + Gemini academic prototype.
 
-## 1. Requirements
+## What is new?
 
-- Python 3.11 or later.
-- A Gemini API key from https://aistudio.google.com/api-keys
-- Permission to import templates in a Legito workspace.
-- Use **invented / non-confidential contracts only** in this prototype.
+- Accept `.docx` **and** `.pdf` uploads (up to 10 MB).
+- PDF input up to **10 pages**.
+- For searchable PDFs, `pypdf` extracts selectable text locally.
+- For scanned/image-only pages (or almost-empty pages), Gemini Vision OCR transcribes only those pages.
+- A reconstructed editable Word document goes through the **same existing** Gemini field-identification and Legito-annotation code.
+- The user downloads `*_legito.docx` and a JSON review report including how many pages needed OCR.
+- No direct Legito API import. Human review remains necessary.
 
-## 2. Open a terminal in this folder
+**Important limitation:** Unlike the original DOCX workflow, **PDF → Word reconstruction is not layout-preserving**. Text flow, headers, signatures, table structure, images, columns, stamps, and page breaks may change or be lost. OCR can misread legal text. Do not rely on this output for real legal documents without careful verification. Use fictional files for demos.
 
-### macOS / Linux
+## Files to update in your EXISTING repo
+
+Replace these three existing files, and add one new file:
+
+1. `streamlit_app.py` (replace)
+2. `migrate.py` (replace)
+3. `requirements.txt` (replace)
+4. `pdf_ingest.py` (**add**) — PDF + OCR logic
+
+`tests_pdf.py` and the `samples` directory are optional but recommended for testing.
+
+**Do not replace or upload `.env`, or `.streamlit/secrets.toml`.** Do not copy real API keys into any source file. The `.env.example` in this package has only a dummy placeholder.
+
+## Local test on your Mac
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+cd ~/Desktop/legito_gemini_starter
+source ~/.venv/bin/activate
 python -m pip install -r requirements.txt
-cp .env.example .env
+python tests.py
+python tests_pdf.py
+python -m streamlit run streamlit_app.py
 ```
 
-### Windows PowerShell
+Upload `samples/example_contract.pdf` (searchable) or `samples/example_scanned_contract.pdf` (image-only OCR) or your existing `samples/example_nda.docx`.
 
-```powershell
-py -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-Copy-Item .env.example .env
-```
+The `tests_pdf.py` scan test **mocks OCR**: it verifies the conversion pipeline but does **not** prove a live Gemini OCR API call. For that, upload the scanned sample through your running Streamlit app using a currently available Gemini model.
 
-If PowerShell blocks activation, you can instead use `.venv\Scripts\python.exe` in place of `python` for commands below.
-
-## 3. Add your API key
-
-Open `.env` in a text editor. Replace `PASTE_YOUR_OWN_API_KEY_HERE` with your Gemini API key; do not include quotes. Never share `.env` or commit it to GitHub. The file is ignored by `.gitignore`.
-
-## 4. Run it
+The CLI also supports PDFs now:
 
 ```bash
-python migrate.py samples/example_nda.docx
+python migrate.py samples/example_contract.pdf --model YOUR_AVAILABLE_GEMINI_MODEL
+python migrate.py samples/example_scanned_contract.pdf --model YOUR_AVAILABLE_GEMINI_MODEL
 ```
 
-To choose an explicitly supported Gemini model from your Google AI Studio project:
+## Update GitHub
 
 ```bash
-python migrate.py samples/example_nda.docx --model gemini-flash-latest
+cd ~/Desktop/legito_gemini_starter
+git switch streamlit-prototype
+git status --short
+# Ensure your real .env is not tracked. Check before staging.
+git add streamlit_app.py migrate.py pdf_ingest.py requirements.txt tests_pdf.py samples/
+git diff --cached --name-only
+# Review staged files: NEVER include .env or real credentials.
+git commit -m "Add PDF upload and Gemini OCR support"
+git push origin streamlit-prototype
 ```
 
-Note: Model IDs and access can change. If Google returns a model-not-found or access error, select an available model in AI Studio and pass its exact model ID using `--model`.
+Streamlit Community Cloud normally redeploys changes pushed to the deployed branch. Your Gemini key stays in the hosting **Secrets** settings; no need to add it to GitHub again. If Streamlit fails to import `pypdf`, verify you pushed the new `requirements.txt`.
 
-## 5. Check the output
+## Workflow design
 
-- `outputs/example_nda_legito.docx`: Word file with Legito import annotations such as `[TextInput: Client name]`, `[Date]` and `[Money]`.
-- `outputs/example_nda_review.json`: proposed field mapping, skipped fields, review notes and elapsed time.
-- Compare the entire output to the original and fix every mistaken proposed field before import. Treat this as an unapproved draft.
+```text
+DOCX → python-docx parsing -----------------┐
+                                          ├→ Gemini field extraction → annotated DOCX → manual Legito import
+PDF  → pypdf selectable text ──┐           │
+       Gemini Vision OCR if scan └→ rebuild Word ┘
+```
 
-## 6. Import into Legito
-
-1. Open your Legito Workspace with rights to edit templates.
-2. Open or create a Template Suite and launch **Template Editor**.
-3. Choose **Import from Word**, select the generated DOCX, and review import settings.
-4. Test the resulting TextInput / Date / Money elements and correct errors in Template Editor.
-5. For a fair comparison against Legito native AI, test the original DOCX separately with **Apply AI conversion** and measure its time / correction effort.
-
-Official annotations reference: https://www.legito.com/knowledge-base/import-from-word/
-
-## 7. What is and is not automated
-
-Automated: Word text read, Gemini JSON suggestions, validated field insertion, generated DOCX and review report.
-
-Not automated: direct Legito API import, actual document review, condition/branch creation, OCR of scanned PDFs, bulk processing.
-
-For complex Word files this prototype is incomplete: text in headers/footers, textboxes, images, embedded content, hyperlinks/track changes and nested tables is not fully supported. It rejects ambiguous/unsupported replacements rather than silently modifying them. Paragraph formatting is mostly preserved but **must be reviewed** before using the output.
-
-Crucial business-case baseline: Legito itself already offers AI-powered conversion of Word templates. Compare manual vs Legito native AI vs our Gemini prototype before claiming any productivity advantage.
+PDF OCR and annotation can involve **two Gemini API requests**, and failures such as 429/503 are possible. Models available to your API key may change; use the exact working model ID shown in Google AI Studio. PDF content is sent to Google's Gemini service for OCR when needed, and extracted contract text is sent for annotation.
