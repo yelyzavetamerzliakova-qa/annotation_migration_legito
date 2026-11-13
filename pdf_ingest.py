@@ -39,13 +39,15 @@ def ocr_pdf_pages(pdf_data: bytes, model_name: str, expected_pages: int) -> OCRT
     """
     from google import genai
     from google.genai import types
+    from gemini_retry import generate_with_retry
 
     key = os.getenv("GEMINI_API_KEY")
     if not key:
         raise ValueError("GEMINI_API_KEY is missing. Set it in .env or Streamlit Secrets.")
 
     client = genai.Client(api_key=key)
-    result = client.models.generate_content(
+    result = generate_with_retry(
+        client,
         model=model_name,
         contents=[
             types.Part.from_bytes(data=pdf_data, mime_type="application/pdf"),
