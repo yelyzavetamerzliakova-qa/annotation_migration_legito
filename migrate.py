@@ -137,6 +137,7 @@ def convert_document(doc, result: Extraction):
 def ask_gemini(paragraphs, model_name: str):
     from google import genai
     from google.genai import types
+    from gemini_retry import generate_with_retry
 
     source = "\n".join(
         f"{idx} | {paragraph.text}" for idx, paragraph in enumerate(paragraphs)
@@ -164,7 +165,8 @@ def ask_gemini(paragraphs, model_name: str):
         "PARAGRAPHS (ID | text):\n" + source
     )
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
-    response = client.models.generate_content(
+    response = generate_with_retry(
+        client,
         model=model_name,
         contents=prompt,
         config=types.GenerateContentConfig(
